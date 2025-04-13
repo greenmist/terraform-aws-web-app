@@ -1,33 +1,50 @@
-name: Node.js CI/CD Pipeline
+name: Docker Container Deployment
 
 on:
   push:
     branches:
-      - main  # Trigger on push to 'main' branch
+      - main  # Trigger on push to main
   pull_request:
     branches:
-      - main  # Trigger on PR to 'main' branch
+      - main  # Trigger on PR to main
 
 jobs:
-  build:
-    runs-on: ubuntu-latest  # Use Ubuntu runner
+  deploy:
+    name: Build and Deploy Docker Container
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2  # Checkout repository code
+      uses: actions/checkout@v2
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v2
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build Docker image
+      run: docker build -t sample-web-app .
+
+    - name: Deploy to EC2 via SSH
+      uses: appleboy/ssh-action@v1.0.0
       with:
-        node-version: '14.x'  # Set up Node.js version 14
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          # Install Git if not already installed
+          if ! command -v git &> /dev/null
+          then
+            echo "Git not found. Installing Git..."
+            sudo yum install -y git
+          fi
 
-    - name: Install dependencies
-      run: npm install  # Install project dependencies
+          cd ~/app/terraform-aws-web-app
+          # Stop and remove any running containers
+          CONTAINER_ID=$(docker ps -q --filter "publish=80")
+          if [ ! -z "$CONTAINER_ID" ]; then
+            docker stop $CONTAINER_ID || true
+            docker rm $CONTAINER_ID || true
+          fi
+          git pull origin main  # Pull the latest changes
 
-    - name: Run tests
-      run: npm test  # Run your tests
-
-    - name: Build and deploy
-      run: |
-        npm run build  # Build your project 
-        npm run deploy  # Deploy your project
+          docker build -t sample-web-app .
+          docker run -d -p 80:80 sample-web-app
